@@ -11,6 +11,7 @@ import io
 import json
 import os
 import re
+import shutil
 import threading
 import time
 from datetime import datetime
@@ -70,40 +71,75 @@ FIELDS = [
 
 Progress = Callable[[str], None]
 _PDFIUM_LOCK = threading.Lock()
+_GROQ_LOCK = threading.Lock()
+_LAST_GROQ_REQUEST = 0.0
 
 
 class ProcessingError(Exception):
     """A clear, user-facing error for a file that could not be processed."""
 
 
+def _rate_limit_delay(response: requests.Response) -> float:
+    raw_delay = (
+        response.headers.get("retry-after")
+        or response.headers.get("x-ratelimit-reset-tokens")
+        or response.headers.get("x-ratelimit-reset-requests")
+        or "5s"
+    ).strip()
+    if raw_delay.isdigit():
+        return max(1.0, float(raw_delay))
+    match = re.fullmatch(
+        r"(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?",
+        raw_delay,
+    )
+    if not match:
+        return 5.0
+    hours, minutes, seconds = (float(part or 0) for part in match.groups())
+    return max(1.0, hours * 3600 + minutes * 60 + seconds)
+
+
 def _call_groq(messages: list[dict]) -> dict:
+    global _LAST_GROQ_REQUEST
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
         raise ProcessingError("Groq API key is not configured (GROQ_API_KEY).")
 
     try:
-        for attempt in range(4):
-            response = requests.post(
-                API_URL,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": MODEL,
-                    "messages": messages,
-                    "temperature": 0,
-                    "reasoning_effort": "none",
-                    "reasoning_format": "hidden",
-                    "max_completion_tokens": 700,
-                    "response_format": {"type": "json_object"},
-                },
-                timeout=90,
-            )
-            if response.status_code != 429 or attempt == 3:
-                response.raise_for_status()
-                break
-            reset = response.headers.get("retry-after") or response.headers.get("x-ratelimit-reset-tokens", "5s")
-            match = re.fullmatch(r"(?:(\d+(?:\.\d+)?)m)?(\d+(?:\.\d+)?)s", reset.strip())
-            delay = (float(match.group(1) or 0) * 60 + float(match.group(2))) if match else 5.0
-            time.sleep(min(max(delay, 1.0), 60.0))
+        with _GROQ_LOCK:
+            for attempt in range(4):
+                wait_for_spacing = 1.0 - (time.monotonic() - _LAST_GROQ_REQUEST)
+                if wait_for_spacing > 0:
+                    time.sleep(wait_for_spacing)
+                response = requests.post(
+                    API_URL,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": MODEL,
+                        "messages": messages,
+                        "temperature": 0,
+                        "reasoning_effort": "none",
+                        "reasoning_format": "hidden",
+                        "max_completion_tokens": 700,
+                        "response_format": {"type": "json_object"},
+                    },
+                    timeout=90,
+                )
+                _LAST_GROQ_REQUEST = time.monotonic()
+                if response.status_code != 429:
+                    response.raise_for_status()
+                    break
+                if attempt == 3:
+                    raise ProcessingError(
+                        "Groq rate limit is still active after three retries. "
+                        "Wait for the provider's quota reset, then try again."
+                    )
+                delay = _rate_limit_delay(response)
+                if delay > 120:
+                    raise ProcessingError(
+                        f"Groq rate limit is active. The provider asked to retry in about "
+                        f"{int(delay)} seconds; wait for the quota reset and try again."
+                    )
+                time.sleep(delay)
         payload = response.json()
         content = payload["choices"][0]["message"]["content"]
         data = json.loads(content)
@@ -223,6 +259,16 @@ def _ocr_fallback(images: list[Image.Image]) -> str:
         configured_path = os.getenv("TESSERACT_CMD", "").strip()
         if configured_path:
             pytesseract.pytesseract.tesseract_cmd = configured_path
+        else:
+            installed_path = shutil.which("tesseract")
+            if not installed_path:
+                candidates = (
+                    Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+                    Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+                )
+                installed_path = next((str(path) for path in candidates if path.is_file()), None)
+            if installed_path:
+                pytesseract.pytesseract.tesseract_cmd = installed_path
         return "\n\n".join(pytesseract.image_to_string(image) for image in images).strip()
     except Exception as exc:
         raise ProcessingError(f"OCR fallback failed. Check that Tesseract is installed: {exc}") from exc
