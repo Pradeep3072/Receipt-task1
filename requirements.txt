@@ -5,3 +5,4 @@ pypdfium2>=4.30
 Pillow>=10.0
 pytesseract>=0.3.13
 requests>=2.32
+reportlab>=4.2
