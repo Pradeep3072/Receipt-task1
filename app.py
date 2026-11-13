@@ -24,9 +24,15 @@ uploads = st.file_uploader(
 )
 
 if uploads:
-    signature = hashlib.sha256(
-        b"".join(f.name.encode("utf-8") + f.getvalue() for f in uploads)
-    ).hexdigest()
+    signature_hash = hashlib.sha256()
+    for uploaded in uploads:
+        filename_bytes = uploaded.name.encode("utf-8")
+        file_view = uploaded.getbuffer()
+        signature_hash.update(len(filename_bytes).to_bytes(8, "big"))
+        signature_hash.update(filename_bytes)
+        signature_hash.update(len(file_view).to_bytes(8, "big"))
+        signature_hash.update(file_view)
+    signature = signature_hash.hexdigest()
     if st.session_state.get("upload_signature") != signature:
         st.session_state["upload_signature"] = signature
         st.session_state.pop("receipt_results", None)
@@ -58,12 +64,19 @@ if uploads:
         # Keep a few requests in flight together while leaving room under hosted API rate limits.
         worker_count = min(4, total)
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = {
-                executor.submit(process_one, index, uploaded.name, uploaded.getvalue()): index
-                for index, uploaded in enumerate(uploads)
-            }
-            pending = set(futures)
+            futures = {}
+            pending = set()
+            next_index = 0
             completed = 0
+            while next_index < total and len(pending) < worker_count:
+                uploaded = uploads[next_index]
+                future = executor.submit(
+                    process_one, next_index, uploaded.name, uploaded.getvalue()
+                )
+                futures[future] = next_index
+                pending.add(future)
+                next_index += 1
+
             while pending:
                 done, pending = wait(pending, timeout=0.15, return_when=FIRST_COMPLETED)
                 while True:
@@ -94,6 +107,15 @@ if uploads:
                         + (f" — {result['error']}" if result["error"] else "")
                     )
                     overall_bar.progress(completed / total, text=f"Overall progress: {completed}/{total} files")
+
+                while next_index < total and len(pending) < worker_count:
+                    uploaded = uploads[next_index]
+                    future = executor.submit(
+                        process_one, next_index, uploaded.name, uploaded.getvalue()
+                    )
+                    futures[future] = next_index
+                    pending.add(future)
+                    next_index += 1
 
         st.session_state["receipt_results"] = results
         st.session_state["receipt_details"] = details
