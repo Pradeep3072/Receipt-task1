@@ -148,8 +148,13 @@ if "receipt_results" in st.session_state:
 
     st.subheader("Results table")
     categories = sorted(CATEGORIES)
-    selected_categories = st.multiselect("Filter by category", categories, default=categories)
-    filtered = table[table["Category"].isin(selected_categories) | table["Category"].eq("")]
+    selected_categories = st.multiselect(
+        "Filter by category",
+        categories,
+        default=[],
+        help="Select one or more categories to filter. Leave empty to show all files.",
+    )
+    filtered = table[table["Category"].isin(selected_categories)] if selected_categories else table
 
     def status_style(row: pd.Series) -> list[str]:
         if row.get("Status") == "Needs review":
