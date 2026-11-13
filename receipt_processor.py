@@ -11,14 +11,29 @@ import io
 import json
 import os
 import re
+import time
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Callable
 
 import requests
 from PIL import Image
 from pypdf import PdfReader
 
+
+def _load_local_env() -> None:
+    env_path = Path(__file__).with_name(".env")
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.strip().partition("=")
+        if not separator or not key or key.startswith("#") or key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip('"').strip("'")
+
+
+_load_local_env()
 
 MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 API_URL = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions")
@@ -65,19 +80,28 @@ def _call_groq(messages: list[dict]) -> dict:
         raise ProcessingError("Groq API key is not configured (GROQ_API_KEY).")
 
     try:
-        response = requests.post(
-            API_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": MODEL,
-                "messages": messages,
-                "temperature": 0,
-                "max_completion_tokens": 1800,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=90,
-        )
-        response.raise_for_status()
+        for attempt in range(4):
+            response = requests.post(
+                API_URL,
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": MODEL,
+                    "messages": messages,
+                    "temperature": 0,
+                    "reasoning_effort": "none",
+                    "reasoning_format": "hidden",
+                    "max_completion_tokens": 700,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=90,
+            )
+            if response.status_code != 429 or attempt == 3:
+                response.raise_for_status()
+                break
+            reset = response.headers.get("retry-after") or response.headers.get("x-ratelimit-reset-tokens", "5s")
+            match = re.fullmatch(r"(?:(\d+(?:\.\d+)?)m)?(\d+(?:\.\d+)?)s", reset.strip())
+            delay = (float(match.group(1) or 0) * 60 + float(match.group(2))) if match else 5.0
+            time.sleep(min(max(delay, 1.0), 60.0))
         payload = response.json()
         content = payload["choices"][0]["message"]["content"]
         data = json.loads(content)
