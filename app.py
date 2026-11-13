@@ -130,18 +130,23 @@ if "receipt_results" in st.session_state:
             label += f" — {result['error']}"
         st.write(f"{result['file']}   {label}")
 
+    table_data = pd.DataFrame(results)
+    table_data["amount_currency"] = table_data.apply(
+        lambda row: f"{row['amount']} {row['currency']}".strip(),
+        axis=1,
+    )
+
     columns = {
         "file": "File",
         "document_type": "Document type",
         "category": "Category",
         "vendor": "Vendor",
         "date": "Date",
-        "amount": "Amount",
-        "currency": "Currency",
+        "amount_currency": "Amount / Currency",
         "source": "Source",
         "status": "Status",
     }
-    table = pd.DataFrame(results).rename(columns=columns)[list(columns.values())]
+    table = table_data.rename(columns=columns)[list(columns.values())]
 
     st.subheader("Results table")
     categories = sorted(CATEGORIES)
