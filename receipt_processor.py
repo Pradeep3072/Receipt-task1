@@ -166,6 +166,10 @@ Rules:
   Office Supplies, Other. Use an empty string for Not an expense document.
 - Extract only values supported by the document. Use empty strings for missing
   or uncertain fields; never guess.
+- Treat every page in this PDF as part of one document. For amount, use only
+  the overall total the document explicitly states for the whole document.
+  Do not add line items, tax amounts, subtotals, or page totals yourself. If no
+  clear overall total is stated, leave amount blank.
 - Use YYYY-MM-DD for date, a numeric amount with two decimal places, and a
   three-letter currency code.
 - confidence and each field_confidence value are numbers from 0 to 1.

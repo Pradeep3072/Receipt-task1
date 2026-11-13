@@ -139,10 +139,8 @@ if "receipt_results" in st.session_state:
         "amount": "Amount",
         "currency": "Currency",
         "receipt_number": "Receipt number",
-        "confidence": "Confidence",
         "source": "Source",
         "status": "Status",
-        "reason": "Reason",
     }
     table = pd.DataFrame(results).rename(columns=columns)[list(columns.values())]
 
