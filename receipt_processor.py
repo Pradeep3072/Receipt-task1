@@ -11,6 +11,7 @@ import io
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -68,6 +69,7 @@ FIELDS = [
 ]
 
 Progress = Callable[[str], None]
+_PDFIUM_LOCK = threading.Lock()
 
 
 class ProcessingError(Exception):
@@ -155,11 +157,16 @@ def _render_pdf_pages(pdf_bytes: bytes) -> list[Image.Image]:
         raise ProcessingError("PDF image rendering is unavailable. Install pypdfium2.") from exc
 
     try:
-        document = pdfium.PdfDocument(pdf_bytes)
-        images = []
-        for page in document:
-            images.append(page.render(scale=2).to_pil().convert("RGB"))
-        document.close()
+        # PDFium is not thread-safe. The app processes files concurrently, so
+        # serialize every PDFium call to prevent native crashes/corruption.
+        with _PDFIUM_LOCK:
+            document = pdfium.PdfDocument(pdf_bytes)
+            try:
+                images = []
+                for page in document:
+                    images.append(page.render(scale=2).to_pil().convert("RGB"))
+            finally:
+                document.close()
     except Exception as exc:
         raise ProcessingError(f"Could not render PDF pages: {exc}") from exc
 
