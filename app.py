@@ -138,7 +138,6 @@ if "receipt_results" in st.session_state:
         "date": "Date",
         "amount": "Amount",
         "currency": "Currency",
-        "receipt_number": "Receipt number",
         "source": "Source",
         "status": "Status",
     }
