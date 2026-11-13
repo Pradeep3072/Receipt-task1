@@ -172,19 +172,25 @@ if "receipt_results" in st.session_state:
         selection_mode="single-row",
     )
 
-    st.subheader("Summary by category and currency")
-    totals: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+    st.subheader("Summary by file, category, and currency")
+    totals: dict[tuple[str, str, str], Decimal] = defaultdict(Decimal)
     for result in results:
         if not result["category"] or not result["amount"] or not result["currency"]:
             continue
         try:
-            totals[(result["category"], result["currency"])] += Decimal(result["amount"])
+            key = (result["file"], result["category"], result["currency"])
+            totals[key] += Decimal(result["amount"])
         except InvalidOperation:
             continue
     if totals:
         summary_rows = [
-            {"Category": category, "Currency": currency, "Total": f"{amount:.2f}"}
-            for (category, currency), amount in sorted(totals.items())
+            {
+                "File": filename,
+                "Category": category,
+                "Currency": currency,
+                "Total": f"{amount:.2f}",
+            }
+            for (filename, category, currency), amount in sorted(totals.items())
         ]
         st.dataframe(pd.DataFrame(summary_rows), hide_index=True, use_container_width=True)
     else:
