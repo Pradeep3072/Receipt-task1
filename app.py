@@ -132,7 +132,7 @@ if "receipt_results" in st.session_state:
 
     table_data = pd.DataFrame(results)
     table_data["amount_currency"] = table_data.apply(
-        lambda row: f"{row['amount']} {row['currency']}".strip(),
+        lambda row: f"{row['currency']} {row['amount']}".strip(),
         axis=1,
     )
 
@@ -142,7 +142,7 @@ if "receipt_results" in st.session_state:
         "category": "Category",
         "vendor": "Vendor",
         "date": "Date",
-        "amount_currency": "Amount / Currency",
+        "amount_currency": "Currency / Amount",
         "source": "Source",
         "status": "Status",
     }
@@ -189,8 +189,7 @@ if "receipt_results" in st.session_state:
             {
                 "File": filename,
                 "Category": category,
-                "Currency": currency,
-                "Total": f"{amount:.2f}",
+                "Total / Currency": f"{amount:.2f} {currency}",
             }
             for (filename, category, currency), amount in sorted(totals.items())
         ]
