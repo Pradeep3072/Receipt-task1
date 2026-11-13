@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import hashlib
-import io
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
+from queue import Empty, Queue
 
 import pandas as pd
 import streamlit as st
 
-from receipt_processor import process_pdf
+from receipt_processor import CATEGORIES, process_pdf
 
 
 st.set_page_config(page_title="Receipt Intake and Classification", layout="wide")
@@ -34,26 +35,65 @@ if uploads:
     if st.button("Process uploaded files", type="primary"):
         progress_area = st.container()
         progress_area.subheader("Progress")
-        progress_text = progress_area.empty()
-        progress_bar = progress_area.progress(0)
-        results = []
+        overall_bar = progress_area.progress(0, text="Overall progress")
+        file_rows = []
+        for uploaded in uploads:
+            with progress_area.container():
+                st.markdown(f"**{uploaded.name}**")
+                file_rows.append((st.progress(0), st.empty()))
+
+        results = [None] * len(uploads)
         details = {}
         total = len(uploads)
+        progress_events: Queue[tuple[int, str]] = Queue()
+        for _, status in file_rows:
+            status.markdown("Starting")
 
-        for index, uploaded in enumerate(uploads):
-            progress_text.markdown(f"**{uploaded.name}** - Starting")
+        def process_one(index: int, filename: str, data: bytes) -> dict:
+            def update_step(step: str) -> None:
+                progress_events.put((index, step))
 
-            def update_step(step: str, filename: str = uploaded.name) -> None:
-                progress_text.markdown(f"**{filename}** - {step}")
+            return process_pdf(filename, data, update_step)
 
-            result = process_pdf(uploaded.name, uploaded.getvalue(), update_step)
-            results.append(result)
-            details[str(index)] = result
-            progress_bar.progress(int((index + 1) / total * 100))
-            progress_text.markdown(
-                f"**{uploaded.name}** - {result['status']}"
-                + (f" — {result['error']}" if result["error"] else "")
-            )
+        # Keep a few requests in flight together while leaving room under hosted API rate limits.
+        worker_count = min(4, total)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(process_one, index, uploaded.name, uploaded.getvalue()): index
+                for index, uploaded in enumerate(uploads)
+            }
+            pending = set(futures)
+            completed = 0
+            while pending:
+                done, pending = wait(pending, timeout=0.15, return_when=FIRST_COMPLETED)
+                while True:
+                    try:
+                        index, step = progress_events.get_nowait()
+                    except Empty:
+                        break
+                    fraction = {
+                        "Extracting digital PDF text": 0.3,
+                        "Reading page images with the vision model": 0.3,
+                        "Running OCR fallback": 0.55,
+                        "Classifying and extracting OCR text": 0.75,
+                    }.get(step, 0.1)
+                    bar, status = file_rows[index]
+                    bar.progress(fraction)
+                    status.markdown(step)
+
+                for future in done:
+                    index = futures[future]
+                    result = future.result()
+                    results[index] = result
+                    details[str(index)] = result
+                    completed += 1
+                    bar, status = file_rows[index]
+                    bar.progress(1.0)
+                    status.markdown(
+                        f"**{result['status']}**"
+                        + (f" — {result['error']}" if result["error"] else "")
+                    )
+                    overall_bar.progress(completed / total, text=f"Overall progress: {completed}/{total} files")
 
         st.session_state["receipt_results"] = results
         st.session_state["receipt_details"] = details
@@ -85,9 +125,9 @@ if "receipt_results" in st.session_state:
     table = pd.DataFrame(results).rename(columns=columns)[list(columns.values())]
 
     st.subheader("Results table")
-    categories = sorted(value for value in table["Category"].dropna().unique() if value)
+    categories = sorted(CATEGORIES)
     selected_categories = st.multiselect("Filter by category", categories, default=categories)
-    filtered = table[table["Category"].isin(selected_categories)] if categories else table
+    filtered = table[table["Category"].isin(selected_categories) | table["Category"].eq("")]
 
     def status_style(row: pd.Series) -> list[str]:
         if row.get("Status") == "Needs review":
