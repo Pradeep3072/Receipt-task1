@@ -158,14 +158,12 @@ if "receipt_results" in st.session_state:
     )
     filtered = table[table["Category"].isin(selected_categories)] if selected_categories else table
 
-    def status_style(row: pd.Series) -> list[str]:
-        if row.get("Status") == "Needs review":
-            return ["background-color: #fff2cc"] * len(row)
-        if row.get("Status") == "Unsupported":
-            return ["background-color: #e7e6e6"] * len(row)
-        return [""] * len(row)
-
-    styled = filtered.style.apply(status_style, axis=1)
+    status_colors = {
+        "Done": "background-color: #d9ead3; color: #000000; font-weight: bold",
+        "Needs review": "background-color: #fff2cc; color: #000000; font-weight: bold",
+        "Unsupported": "background-color: #e7e6e6; color: #000000; font-weight: bold",
+    }
+    styled = filtered.style.map(lambda value: status_colors.get(value, ""), subset=["Status"])
     event = st.dataframe(
         styled,
         use_container_width=True,
@@ -174,25 +172,34 @@ if "receipt_results" in st.session_state:
         selection_mode="single-row",
     )
 
-    st.subheader("Summary by file, category, and currency")
-    totals: dict[tuple[str, str, str], Decimal] = defaultdict(Decimal)
+    st.subheader("Summary by category")
+    summary_by_category: dict[str, dict] = {}
     for result in results:
-        if not result["category"] or not result["amount"] or not result["currency"]:
+        category = result["category"]
+        if not category:
+            continue
+        summary = summary_by_category.setdefault(category, {"files": [], "totals": defaultdict(Decimal)})
+        summary["files"].append(result["file"])
+        if not result["amount"] or not result["currency"]:
             continue
         try:
-            key = (result["file"], result["category"], result["currency"])
-            totals[key] += Decimal(result["amount"])
+            summary["totals"][result["currency"]] += Decimal(result["amount"])
         except InvalidOperation:
             continue
-    if totals:
-        summary_rows = [
-            {
-                "File": filename,
-                "Category": category,
-                "Total / Currency": f"{amount:.2f} {currency}",
-            }
-            for (filename, category, currency), amount in sorted(totals.items())
-        ]
+    if summary_by_category:
+        summary_rows = []
+        for category, summary in sorted(summary_by_category.items()):
+            amounts = "; ".join(
+                f"{currency} {amount:.2f}"
+                for currency, amount in sorted(summary["totals"].items())
+            )
+            summary_rows.append(
+                {
+                    "Category": category,
+                    "Files": ", ".join(summary["files"]),
+                    "Total / Currency": amounts or "No complete amounts",
+                }
+            )
         st.dataframe(pd.DataFrame(summary_rows), hide_index=True, use_container_width=True)
     else:
         st.write("No categorized amounts to summarize.")
