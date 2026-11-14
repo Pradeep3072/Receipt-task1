@@ -89,7 +89,21 @@ python generate_synthetic_samples.py
 python evaluate.py
 ```
 
-The last recorded run on the replacement samples reported document type **12/12**, category **11/12**, vendor **12/12**, date **12/12**, and amount **12/12**. The one category mismatch was R10: expected Travel, predicted Other. This run was before the latest prompt and interface changes; rerun the evaluator for an up-to-date result.
+The evaluator also compares confidence with correctness for each field. It reports mean confidence, observed accuracy, Expected Calibration Error (ECE), and Brier score. ECE uses five equal-width confidence bins; Brier is the mean squared difference between confidence and the correct/incorrect outcome. Lower ECE and Brier scores indicate a closer fit, but a small sample cannot establish reliable calibration. Overall document calibration only includes fixtures with all six expected fields populated.
+
+Latest run on the replacement samples: document type **12/12**, category **11/12**, vendor **12/12**, date **12/12**, and amount **12/12**. The one category mismatch was R10: expected Travel, predicted Other.
+
+| Confidence measure | Samples | Mean confidence | Accuracy | ECE | Brier |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Document type | 12 | 0.989 | 1.000 | 0.011 | 0.000 |
+| Category | 11 | 0.949 | 0.909 | 0.040 | 0.076 |
+| Vendor | 11 | 0.968 | 1.000 | 0.032 | 0.001 |
+| Date | 11 | 0.990 | 1.000 | 0.010 | 0.000 |
+| Amount | 10 | 0.989 | 1.000 | 0.011 | 0.000 |
+| Currency | 11 | 0.990 | 1.000 | 0.010 | 0.000 |
+| Overall document | 10 | 0.945 | 1.000 | 0.055 | 0.003 |
+
+The dataset is too small and synthetic to establish reliable calibration. Overall confidence is evaluated only for fixtures with all six expected fields populated.
 
 ## Known weaknesses
 

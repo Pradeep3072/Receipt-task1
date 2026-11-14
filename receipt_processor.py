@@ -380,6 +380,7 @@ def _normalise_result(raw: dict, source: str, text: str) -> dict:
     return {
         **values,
         "confidence": round(confidence, 2),
+        "field_confidence": field_confidence,
         "source": source,
         "status": status,
         "reason": reason,
@@ -399,6 +400,7 @@ def _failed_result(filename: str, error: str) -> dict:
         "currency": "",
         "receipt_number": "",
         "confidence": 0.0,
+        "field_confidence": {key: 0.0 for key in FIELDS[:6]},
         "source": "",
         "status": "Failed",
         "reason": "",
