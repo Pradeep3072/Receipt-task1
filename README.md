@@ -7,13 +7,14 @@ A Streamlit app that accepts receipt and expense PDFs, extracts their details, c
 - Accepts multiple PDF files in one upload.
 - Shows a progress bar and current step for each file. Up to four processing tasks can run at once.
 - Reads selectable text from digital PDFs with `pypdf`.
-- For scanned PDFs, renders pages with `pypdfium2`, asks the Groq vision model to transcribe them, and uses Tesseract OCR if vision transcription fails.
+- For scanned PDFs, renders pages with `pypdfium2`, asks the Groq vision model to transcribe them, and uses Tesseract OCR if vision transcription fails. For a mixed PDF, it OCRs only pages without selectable text and joins page text in order.
+- Marks a PDF as `Digital` when every page has selectable text; if any page requires OCR, marks the PDF as `OCR`.
 - Treats all pages in a PDF as one document. For the amount, the prompt asks for the explicitly stated overall document total and does not ask the model to calculate it from subtotals or line items.
 - Extracts document type, category, vendor, date, amount, currency, receipt number, confidence, and a short reason.
 - Shows the main fields in a results table. Amount and currency share a column. Confidence, reason, receipt number, and extracted text are available in the selected row's detail panel.
 - Leaves the category filter empty by default, so all files show until a category is selected.
 - Shows a summary grouped by category, listing the files and totals split by currency. Different currencies are never added together.
-- Downloads a CSV with the same columns as the results table.
+- Downloads a CSV with the same visible rows and columns as the results table, including any active category filter.
 
 ### Status colors
 
@@ -26,8 +27,8 @@ A Streamlit app that accepts receipt and expense PDFs, extracts their details, c
 
 1. `app.py` receives uploaded PDF names and bytes from Streamlit.
 2. `app.py` calls `process_pdf()` in `receipt_processor.py` for each file and displays progress updates.
-3. `receipt_processor.py` uses `pypdf` to extract selectable text from every page. If text is present, it sends that text for classification and extraction.
-4. If no text can be extracted, `pypdfium2` renders the pages as images. The Groq vision model transcribes the images first; Tesseract is the OCR fallback.
+3. `receipt_processor.py` uses `pypdf` to extract selectable text from every page.
+4. If any page has no selectable text, `pypdfium2` renders those pages as images. The Groq vision model transcribes the images first; Tesseract is the OCR fallback. Digital and OCR text is then combined in page order.
 5. The extracted text is sent to Groq for classification and field extraction. The processor validates and normalizes the returned fields, assigns a status, and returns a result dictionary to `app.py`.
 6. `app.py` stores the results for the current Streamlit session and uses them to render the table, summary, detail panel, and CSV download.
 
@@ -41,6 +42,10 @@ PDFium rendering is protected by a lock because PDFium must not be called simult
 
 The app looks for Tesseract on `PATH` and at the standard Windows installation paths. For a different installation path, set `TESSERACT_CMD` in `.env`.
 
+## Data handling
+
+Use synthetic documents only. Digital PDF text and scanned page images are sent to the configured Groq service for inference. If Tesseract is used, its OCR text is also sent to Groq for classification and field extraction.
+
 ## Setup and run
 
 From the project folder, in PowerShell:
@@ -49,7 +54,7 @@ From the project folder, in PowerShell:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
 Edit `.env` and set `GROQ_API_KEY` to your key. The `.env` file is ignored by Git; do not commit it or paste the key into chat.

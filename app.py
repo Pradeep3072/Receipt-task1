@@ -49,7 +49,6 @@ if uploads:
                 file_rows.append((st.progress(0), st.empty()))
 
         results = [None] * len(uploads)
-        details = {}
         total = len(uploads)
         progress_events: Queue[tuple[int, str]] = Queue()
         for _, status in file_rows:
@@ -86,7 +85,7 @@ if uploads:
                         break
                     fraction = {
                         "Extracting digital PDF text": 0.3,
-                        "Reading page images with the vision model": 0.3,
+                        "Running OCR": 0.3,
                         "Running OCR fallback": 0.55,
                         "Classifying and extracting OCR text": 0.75,
                     }.get(step, 0.1)
@@ -98,7 +97,6 @@ if uploads:
                     index = futures[future]
                     result = future.result()
                     results[index] = result
-                    details[str(index)] = result
                     completed += 1
                     bar, status = file_rows[index]
                     bar.progress(1.0)
@@ -118,11 +116,13 @@ if uploads:
                     next_index += 1
 
         st.session_state["receipt_results"] = results
-        st.session_state["receipt_details"] = details
+else:
+    st.session_state.pop("upload_signature", None)
+    st.session_state.pop("receipt_results", None)
+    st.session_state.pop("receipt_details", None)
 
 if "receipt_results" in st.session_state:
     results = st.session_state["receipt_results"]
-    details = st.session_state.get("receipt_details", {})
     st.subheader("Progress")
     for result in results:
         label = result["status"]
@@ -131,10 +131,9 @@ if "receipt_results" in st.session_state:
         st.write(f"{result['file']}   {label}")
 
     table_data = pd.DataFrame(results)
-    table_data["amount_currency"] = table_data.apply(
-        lambda row: f"{row['currency']} {row['amount']}".strip(),
-        axis=1,
-    )
+    table_data["amount_currency"] = [
+        f"{result['currency']} {result['amount']}".strip() for result in results
+    ]
 
     columns = {
         "file": "File",
@@ -197,7 +196,7 @@ if "receipt_results" in st.session_state:
                 {
                     "Category": category,
                     "Files": ", ".join(summary["files"]),
-                    "Total / Currency": amounts or "No complete amounts",
+                    "Currency / total": amounts or "No complete amounts",
                 }
             )
         st.dataframe(pd.DataFrame(summary_rows), hide_index=True, use_container_width=True)
@@ -207,8 +206,7 @@ if "receipt_results" in st.session_state:
     selected_rows = event.selection.rows if event and event.selection else []
     if selected_rows:
         visible_index = filtered.index[selected_rows[0]]
-        selected_file = str(table.loc[visible_index, "File"])
-        result = next((item for item in results if item["file"] == selected_file), None)
+        result = results[visible_index]
     else:
         result = None
 
@@ -233,7 +231,7 @@ if "receipt_results" in st.session_state:
         if result["error"]:
             st.error(result["error"])
 
-    csv_bytes = table.to_csv(index=False).encode("utf-8-sig")
+    csv_bytes = filtered.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "Download CSV",
         data=csv_bytes,
