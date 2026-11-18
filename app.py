@@ -1,5 +1,6 @@
 from __future__ import annotations
-
+import os
+import requests
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from collections import defaultdict
@@ -9,7 +10,7 @@ from queue import Empty, Queue
 import pandas as pd
 import streamlit as st
 
-from receipt_processor import CATEGORIES, process_pdf
+from receipt_processor import CATEGORIES
 
 
 st.set_page_config(page_title="Receipt Intake and Classification", layout="wide")
@@ -55,10 +56,26 @@ if uploads:
             status.markdown("Starting")
 
         def process_one(index: int, filename: str, data: bytes) -> dict:
-            def update_step(step: str) -> None:
-                progress_events.put((index, step))
+            progress_events.put((index, "Sending to receipt API"))
 
-            return process_pdf(filename, data, update_step)
+            api_url = os.getenv(
+                "RECEIPT_API_URL",
+                "http://localhost:8000",
+            ).rstrip("/")
+
+            response = requests.post(
+                f"{api_url}/api/receipts",
+                files={
+                    "file": (
+                        filename,
+                        data,
+                        "application/pdf",
+                    )
+                },
+                timeout=300,
+            )
+            response.raise_for_status()
+            return response.json()
 
         # Keep a few requests in flight together while leaving room under hosted API rate limits.
         worker_count = min(4, total)
