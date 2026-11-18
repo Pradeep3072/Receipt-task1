@@ -5,7 +5,7 @@ A Streamlit app that accepts receipt and expense PDFs, extracts their details, c
 ## What the app does
 
 - Accepts multiple PDF files in one upload.
-- Shows a progress bar and current step for each file. Up to four processing tasks can run at once.
+- Shows a progress bar for each file and overall batch progress. Up to four file requests can run at once.
 - Reads selectable text from digital PDFs with `pypdf`.
 - For scanned PDFs, renders pages with `pypdfium2`, asks the Groq vision model to transcribe them, and uses Tesseract OCR if vision transcription fails. For a mixed PDF, it OCRs only pages without selectable text and joins page text in order.
 - Marks a PDF as `Digital` when every page has selectable text; if any page requires OCR, marks the PDF as `OCR`.
@@ -26,13 +26,14 @@ A Streamlit app that accepts receipt and expense PDFs, extracts their details, c
 ## How processing works
 
 1. `app.py` receives uploaded PDF names and bytes from Streamlit.
-2. `app.py` calls `process_pdf()` in `receipt_processor.py` for each file and displays progress updates.
-3. `receipt_processor.py` uses `pypdf` to extract selectable text from every page.
-4. If any page has no selectable text, `pypdfium2` renders those pages as images. The Groq vision model transcribes the images first; Tesseract is the OCR fallback. Digital and OCR text is then combined in page order.
-5. The extracted text is sent to Groq for classification and field extraction. The processor validates and normalizes the returned fields, assigns a status, and returns a result dictionary to `app.py`.
-6. `app.py` stores the results for the current Streamlit session and uses them to render the table, summary, detail panel, and CSV download.
+2. For each file, `app.py` sends an HTTP `POST` request with the PDF as `multipart/form-data` to the FastAPI endpoint `POST /api/receipts`.
+3. `api.py` receives the upload, reads its bytes, and calls `process_pdf()` in `receipt_processor.py`.
+4. `receipt_processor.py` uses `pypdf` to extract selectable text from every page.
+5. If any page has no selectable text, `pypdfium2` renders those pages as images. The Groq vision model transcribes the images first; Tesseract is the OCR fallback. Digital and OCR text is then combined in page order.
+6. The extracted text is sent to Groq for classification and field extraction. The processor validates and normalizes the returned fields, assigns a status, and returns a result dictionary. FastAPI returns that result as JSON.
+7. `app.py` reads the JSON response into a Python dictionary, stores results for the current Streamlit session, and uses them to render the table, summary, detail panel, and CSV download.
 
-PDFium rendering is protected by a lock because PDFium must not be called simultaneously from multiple threads. Groq requests are serialized and spaced to reduce rate-limit errors. Each file is handled separately, so one file error does not stop the remaining files.
+PDFium rendering is protected by a lock because PDFium must not be called simultaneously from multiple threads. Groq requests are serialized and spaced to reduce rate-limit errors. Processor errors are returned as a `Failed` result for that file.
 
 ## Requirements
 
@@ -54,28 +55,35 @@ From the project folder, in PowerShell:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-Edit `.env` and set `GROQ_API_KEY` to your key. The `.env` file is ignored by Git; do not commit it or paste the key into chat.
+Set `GROQ_API_KEY` in your environment, or create a `.env` file in the project folder with `GROQ_API_KEY=your-key`. The processor loads values from `.env`. Keep the key private and do not commit `.env`.
 
-Start the app:
+Start FastAPI in the first PowerShell window:
+
+```powershell
+python -m uvicorn api:app --reload --port 8000
+```
+
+Start Streamlit in a second PowerShell window, with the same virtual environment activated:
 
 ```powershell
 python -m streamlit run app.py
 ```
+
+By default, Streamlit sends requests to `http://localhost:8000`. To use another FastAPI address, set the `RECEIPT_API_URL` environment variable before starting Streamlit. FastAPI's interactive API documentation is available at `http://localhost:8000/docs` while the API server is running.
 
 On macOS or Linux, activate the environment with `source .venv/bin/activate` instead.
 
 ## Project files
 
 - `app.py` — Streamlit upload interface, per-file progress, result table, category filter, summary, detail panel, and CSV download.
+- `api.py` — FastAPI upload endpoint (`POST /api/receipts`) that calls the receipt processor and returns its result as JSON.
 - `receipt_processor.py` — PDF text extraction, page rendering, vision/OCR transcription, Groq requests, field validation, confidence handling, and statuses.
 - `evaluate.py` — Compares processor output with `expected_results.csv` and reports accuracy and mismatches.
 - `generate_synthetic_samples.py` — Regenerates the locally created PDF samples.
 - `expected_results.csv` — Expected values for those locally created samples.
 - `sample_docs/` — Synthetic PDFs used for local evaluation.
-- `.env.example` — Example Groq configuration without an API key.
 - `requirements.txt` — Python package dependencies.
 
 ## Evaluation
